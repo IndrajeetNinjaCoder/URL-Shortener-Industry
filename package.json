@@ -1,0 +1,17 @@
+{
+  "name": "url-shortener",
+  "version": "1.0.0",
+  "description": "A basic URL shortener using Node.js and Express.js",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "geoip-lite": "^2.0.0",
+    "nanoid": "^3.3.6",
+    "pg": "^8.11.0",
+    "redis": "^5.11.0",
+    "ua-parser-js": "^2.0.9"
+  }
+}
