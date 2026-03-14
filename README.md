@@ -1,6 +1,6 @@
 # 🔗 SnapURL — URL Shortener API
 
-A powerful, production-ready URL shortener built with **Node.js**, **PostgreSQL**, and **Redis**. Supports advanced link management, analytics, QR codes, and more.
+A powerful, production-ready URL shortener built with **Node.js**, **PostgreSQL**, and **Redis**. Supports user authentication, advanced link management, analytics, QR codes, and more.
 
 ---
 
@@ -8,8 +8,9 @@ A powerful, production-ready URL shortener built with **Node.js**, **PostgreSQL*
 
 | Feature | Description |
 |---|---|
+| 🔐 **User Authentication** | JWT-based signup, login, and protected routes |
 | 🔗 **Link Shortening** | Generate short URLs with auto or custom aliases |
-| 🔐 **Password Protection** | Secure links behind a password |
+| 🔒 **Password Protection** | Secure individual links behind a password |
 | ⏳ **Link Expiry** | Set expiry by hours, days, or preset durations |
 | 🔢 **Click Limits** | Cap how many times a link can be visited |
 | 1️⃣ **One-Time Links** | Links that self-destruct after first use |
@@ -21,6 +22,7 @@ A powerful, production-ready URL shortener built with **Node.js**, **PostgreSQL*
 | 📷 **QR Codes** | Auto-generated QR code for every short URL |
 | ⚡ **Redis Caching** | Lightning-fast redirects via Redis cache |
 | 🛡️ **Rate Limiting** | 100 requests per 15 minutes per IP |
+| 👤 **Link Ownership** | Users can only edit/delete their own links |
 
 ---
 
@@ -29,11 +31,21 @@ A powerful, production-ready URL shortener built with **Node.js**, **PostgreSQL*
 - **Runtime** — Node.js + Express
 - **Database** — PostgreSQL (NeonDB)
 - **Cache** — Redis (Upstash)
-- **Libraries** — `nanoid`, `bcrypt`, `qrcode`, `geoip-lite`, `ua-parser-js`, `axios`
+- **Auth** — JSON Web Tokens (JWT)
+- **Libraries** — `nanoid`, `bcrypt`, `jsonwebtoken`, `qrcode`, `geoip-lite`, `ua-parser-js`, `axios`
 
 ---
 
 ## 🗄️ Database Schema
+
+### `users` Table
+```sql
+id         SERIAL PRIMARY KEY
+name       TEXT NOT NULL
+email      TEXT UNIQUE NOT NULL
+password   TEXT NOT NULL
+created_at TIMESTAMP DEFAULT now()
+```
 
 ### `urls` Table
 ```sql
@@ -45,6 +57,7 @@ expires_at    TIMESTAMP
 password      TEXT
 click_limit   INTEGER
 one_time      BOOLEAN DEFAULT false
+user_id       INTEGER REFERENCES users(id) ON DELETE CASCADE
 ```
 
 ### `click_events` Table
@@ -61,40 +74,175 @@ browser     TEXT
 
 ---
 
+## 📁 Project Structure
+
+```
+URL-Shortener/
+├── server.js                           # Entry point — boots server, handles shutdown
+├── package.json
+├── .env
+├── .gitignore
+└── src/
+    ├── app.js                          # Express setup, middleware, route mounting
+    ├── config/
+    │   ├── db.js                       # PostgreSQL pool
+    │   ├── jwt.js                      # JWT secret & expiry config
+    │   └── redis.js                    # Redis client
+    ├── controllers/
+    │   ├── auth.controller.js          # signup, login, getMe
+    │   ├── url.controller.js           # createShortUrl, redirectUrl, edit, delete, bulk, preview
+    │   └── analytics.controller.js     # getAnalytics
+    ├── middleware/
+    │   ├── auth.js                     # JWT authentication middleware
+    │   └── rateLimiter.js              # Rate limiting middleware
+    ├── routes/
+    │   ├── auth.routes.js              # /auth/*
+    │   ├── url.routes.js               # /shorten, /:shortId, /edit, /delete, /preview
+    │   └── analytics.routes.js         # /analytics/:shortId
+    └── utils/
+        └── helpers.js                  # parseTTL(), logClick()
+```
+
+---
+
 ## 🚀 Getting Started
 
-### 1. Install Dependencies
+### 1. Clone & Install
 
 ```bash
-npm install express nanoid pg redis geoip-lite ua-parser-js express-rate-limit bcrypt qrcode axios sharp
+git clone https://github.com/your-username/url-shortener.git
+cd url-shortener
+npm install
 ```
 
-### 2. Configure Environment
+### 2. Set Up Environment
 
-Update the connection strings in `index.js`:
+Create a `.env` file in the root:
 
-```js
-// PostgreSQL
-const pool = new Pool({ connectionString: "YOUR_POSTGRES_URL" });
-
-// Redis
-const redisClient = createClient({ url: "YOUR_REDIS_URL" });
+```env
+PORT=3000
+DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
+REDIS_URL=rediss://default:password@host:6379
+JWT_SECRET=your_super_secret_key_change_this
 ```
 
-### 3. Start the Server
+### 3. Set Up Database
+
+Run these in your NeonDB SQL editor:
+
+```sql
+CREATE TABLE users (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  email      TEXT UNIQUE NOT NULL,
+  password   TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE urls (
+  id           SERIAL PRIMARY KEY,
+  short_id     VARCHAR(10) UNIQUE NOT NULL,
+  original_url TEXT NOT NULL,
+  created_at   TIMESTAMP DEFAULT now(),
+  expires_at   TIMESTAMP,
+  password     TEXT,
+  click_limit  INTEGER,
+  one_time     BOOLEAN DEFAULT false,
+  user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE click_events (
+  id         SERIAL PRIMARY KEY,
+  short_id   VARCHAR(10),
+  ip_address TEXT,
+  user_agent TEXT,
+  clicked_at TIMESTAMP DEFAULT now(),
+  country    TEXT,
+  device     TEXT,
+  browser    TEXT
+);
+```
+
+### 4. Start the Server
 
 ```bash
-node index.js
-# Server running on port 3000
+# Development (auto-restart on file changes)
+npm run dev
+
+# Production
+npm start
 ```
 
 ---
 
 ## 📡 API Reference
 
-### `POST /shorten` — Create Short URL
+### 🔐 Auth Routes
 
-**Request Body:**
+#### `POST /auth/signup` — Create Account
+
+```json
+{
+  "name": "Indrajeet",
+  "email": "indrajeet@email.com",
+  "password": "secret123"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Account created successfully",
+  "token": "eyJhbGci...",
+  "user": { "id": 1, "name": "Indrajeet", "email": "indrajeet@email.com" }
+}
+```
+
+---
+
+#### `POST /auth/login` — Login
+
+```json
+{
+  "email": "indrajeet@email.com",
+  "password": "secret123"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Login successful",
+  "token": "eyJhbGci...",
+  "user": { "id": 1, "name": "Indrajeet", "email": "indrajeet@email.com" }
+}
+```
+
+---
+
+#### `GET /auth/me` — Get Current User 🔒
+
+```
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "name": "Indrajeet",
+  "email": "indrajeet@email.com",
+  "createdAt": "2026-03-12T10:00:00.000Z"
+}
+```
+
+---
+
+### 🔗 URL Routes
+
+> 🔒 = Requires `Authorization: Bearer <token>` header
+
+#### `POST /shorten` — Create Short URL 🔒
 
 ```json
 {
@@ -110,7 +258,6 @@ node index.js
 > `expiryType` options: `"1h"` · `"24h"` · `"7d"` · or use `expiresInHours` / `expiresInDays`
 
 **Response:**
-
 ```json
 {
   "shortUrl": "http://localhost:3000/my-link",
@@ -125,7 +272,7 @@ node index.js
 
 ---
 
-### `GET /:shortId` — Redirect
+#### `GET /:shortId` — Redirect (Public)
 
 Redirects to the original URL. For password-protected links, pass the password as a query param.
 
@@ -133,48 +280,21 @@ Redirects to the original URL. For password-protected links, pass the password a
 GET /my-link?password=secret
 ```
 
-**Status Codes:**
-
 | Code | Meaning |
 |---|---|
 | `302` | Redirect successful |
 | `401` | Password required |
 | `403` | Incorrect password |
 | `404` | Short URL not found |
-| `410` | Link expired / click limit reached / one-time used |
+| `410` | Expired / click limit reached / one-time used |
 
 ---
 
-### `GET /analytics/:shortId` — Link Analytics
-
-```
-GET /analytics/my-link
-```
-
-**Response:**
-
-```json
-{
-  "shortId": "my-link",
-  "totalClicks": 42,
-  "countries": [{ "country": "US", "count": "30" }],
-  "devices":   [{ "device": "desktop", "count": "35" }],
-  "browsers":  [{ "browser": "Chrome", "count": "28" }]
-}
-```
-
----
-
-### `GET /preview/:shortId` — Link Preview
+#### `GET /preview/:shortId` — Link Preview 🔒
 
 Returns OG metadata scraped from the destination URL.
 
-```
-GET /preview/my-link
-```
-
 **Response:**
-
 ```json
 {
   "shortId": "my-link",
@@ -193,15 +313,9 @@ GET /preview/my-link
 
 ---
 
-### `PUT /edit/:shortId` — Edit a Link
+#### `PUT /edit/:shortId` — Edit a Link 🔒
 
-Update any combination of fields. Only fields included in the body are changed.
-
-```
-PUT /edit/my-link
-```
-
-**Request Body:**
+Only the owner can edit. Send any fields you want to update.
 
 ```json
 {
@@ -215,7 +329,6 @@ PUT /edit/my-link
 ```
 
 **Response:**
-
 ```json
 {
   "message": "Link updated successfully",
@@ -227,16 +340,11 @@ PUT /edit/my-link
 
 ---
 
-### `DELETE /delete/:shortId` — Delete a Link
+#### `DELETE /delete/:shortId` — Delete a Link 🔒
 
-Permanently removes the link and all its click event history.
-
-```
-DELETE /delete/my-link
-```
+Only the owner can delete. Removes the link and all its click history.
 
 **Response:**
-
 ```json
 {
   "message": "Short URL 'my-link' deleted successfully"
@@ -245,64 +353,51 @@ DELETE /delete/my-link
 
 ---
 
-### `POST /shorten/bulk` — Bulk Create Links
+#### `POST /shorten/bulk` — Bulk Create Links 🔒
 
-Create up to **50 short URLs** in a single request.
-
-**Request Body:**
+Create up to **50 short URLs** in one request.
 
 ```json
 {
   "links": [
-    {
-      "url": "https://youtube.com/watch?v=dQw4w9WgXcQ",
-      "customAlias": "rick-roll",
-      "expiryType": "7d",
-      "clickLimit": 100
-    },
-    {
-      "url": "https://github.com",
-      "expiresInDays": 30
-    },
-    {
-      "url": "https://wikipedia.org",
-      "oneTime": true
-    }
+    { "url": "https://youtube.com", "customAlias": "yt", "expiryType": "7d" },
+    { "url": "https://github.com", "expiresInDays": 30 },
+    { "url": "https://wikipedia.org", "oneTime": true }
   ]
 }
 ```
 
 **Response (`207 Multi-Status`):**
-
 ```json
 {
   "total": 3,
   "succeeded": 3,
   "failed": 0,
-  "results": [
-    {
-      "index": 0,
-      "shortId": "rick-roll",
-      "shortUrl": "http://localhost:3000/rick-roll",
-      "qrCode": "data:image/png;base64,...",
-      "originalUrl": "https://youtube.com/...",
-      "expiresAt": "2026-03-19T10:00:00.000Z",
-      "clickLimit": 100,
-      "oneTime": false,
-      "passwordProtected": false
-    }
-  ],
-  "errors": []
+  "results": [ /* array of created links with qrCode */ ],
+  "errors":  []
 }
 ```
 
-> Partial failures return `207` with successful items in `results` and failed ones in `errors`.
+---
+
+#### `GET /analytics/:shortId` — Link Analytics 🔒
+
+Only the owner can view analytics for their link.
+
+**Response:**
+```json
+{
+  "shortId": "my-link",
+  "totalClicks": 42,
+  "countries": [{ "country": "IN", "count": "30" }],
+  "devices":   [{ "device": "desktop", "count": "35" }],
+  "browsers":  [{ "browser": "Chrome", "count": "28" }]
+}
+```
 
 ---
 
 ## ⚙️ Rate Limiting
-
-All endpoints are protected by a rate limiter:
 
 - **Window:** 15 minutes
 - **Max requests:** 100 per IP
@@ -310,21 +405,13 @@ All endpoints are protected by a rate limiter:
 
 ---
 
-## 🔒 Security Notes
+## 🔒 Security
 
-- Passwords are hashed with **bcrypt** (salt rounds: 10) — plain text is never stored
+- Passwords hashed with **bcrypt** (10 salt rounds) — never stored as plain text
+- JWT tokens expire after **7 days**
 - Password-protected links are **never cached** in Redis
 - Redis cache is invalidated on link edit or deletion
-
----
-
-## 📁 Project Structure
-
-```
-├── index.js          # Main application — all routes and logic
-├── package.json
-└── README.md
-```
+- Every protected route verifies **ownership** — users can only modify their own links
 
 ---
 

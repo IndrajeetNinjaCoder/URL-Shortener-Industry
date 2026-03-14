@@ -1,8 +1,8 @@
-const { nanoid }      = require('nanoid');
-const bcrypt          = require('bcrypt');
-const QRCode          = require('qrcode');
-const axios           = require('axios');
-const { pool }        = require('../config/db');
+const { nanoid } = require('nanoid');
+const bcrypt = require('bcrypt');
+const QRCode = require('qrcode');
+const axios = require('axios');
+const { pool } = require('../config/db');
 const { redisClient } = require('../config/redis');
 const { parseTTL, logClick } = require('../utils/helpers');
 
@@ -23,9 +23,9 @@ async function createShortUrl(req, res) {
 
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
-  const shortId    = customAlias || nanoid(6);
+  const shortId = customAlias || nanoid(6);
   const ttlSeconds = parseTTL(expiryOpts);
-  const expiresAt  = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
+  const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
   const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
   try {
@@ -33,19 +33,28 @@ async function createShortUrl(req, res) {
     if (existing.rows.length > 0)
       return res.status(400).json({ error: 'Custom alias already taken' });
 
+    // await pool.query(
+    //   `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time)
+    //    VALUES ($1,$2,$3,$4,$5,$6)`,
+    //   [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false]
+    // );
+
+    // TO THIS:
     await pool.query(
-      `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false]
+      `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time, user_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false, req.user.id]
     );
 
     const shortUrl = `http://localhost:3000/${shortId}`;
-    const qrCode   = await QRCode.toDataURL(shortUrl);
+    const qrCode = await QRCode.toDataURL(shortUrl);
 
     if (!hashedPassword) await cacheUrl(shortId, url, ttlSeconds);
 
-    res.json({ shortUrl, qrCode, expiresAt, clickLimit, oneTime,
-               customAlias: customAlias || null, passwordProtected: !!password });
+    res.json({
+      shortUrl, qrCode, expiresAt, clickLimit, oneTime,
+      customAlias: customAlias || null, passwordProtected: !!password
+    });
 
   } catch (err) {
     console.error(err);
@@ -143,23 +152,23 @@ async function previewUrl(req, res) {
 
       const og = (prop) => html.match(new RegExp(`<meta[^>]+property=["']og:${prop}["'][^>]+content=["']([^"']+)["']`, 'i'));
 
-      meta.title       = (og('title')       || html.match(/<title[^>]*>([^<]+)<\/title>/i))?.[1]?.trim() || null;
+      meta.title = (og('title') || html.match(/<title[^>]*>([^<]+)<\/title>/i))?.[1]?.trim() || null;
       meta.description = (og('description') || html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i))?.[1]?.trim() || null;
-      meta.image       = og('image')?.[1]?.trim() || null;
+      meta.image = og('image')?.[1]?.trim() || null;
     } catch (_) { /* silent */ }
 
     const { rows } = await pool.query('SELECT COUNT(*) FROM click_events WHERE short_id=$1', [shortId]);
 
     res.json({
       shortId,
-      shortUrl:    `http://localhost:3000/${shortId}`,
+      shortUrl: `http://localhost:3000/${shortId}`,
       originalUrl: original_url,
-      createdAt:   created_at,
-      expiresAt:   expires_at,
-      clickLimit:  click_limit,
-      oneTime:     one_time,
+      createdAt: created_at,
+      expiresAt: expires_at,
+      clickLimit: click_limit,
+      oneTime: one_time,
       totalClicks: parseInt(rows[0].count),
-      preview:     meta
+      preview: meta
     });
 
   } catch (err) {
@@ -179,10 +188,16 @@ async function editUrl(req, res) {
     if (existing.rows.length === 0)
       return res.status(404).json({ error: 'Short URL not found' });
 
+
+    /* ── Ownership check ── */
+    if (existing.rows[0].user_id !== req.user.id)
+      return res.status(403).json({ error: 'You do not have permission to edit this link' });
+
+
     const fields = [], values = [];
     let idx = 1;
 
-    if (url)               { fields.push(`original_url = $${idx++}`); values.push(url); }
+    if (url) { fields.push(`original_url = $${idx++}`); values.push(url); }
 
     const ttlSeconds = parseTTL(expiryOpts);
     if (ttlSeconds !== null) {
@@ -195,7 +210,7 @@ async function editUrl(req, res) {
       values.push(password ? await bcrypt.hash(password, 10) : null);
     }
     if (clickLimit !== undefined) { fields.push(`click_limit = $${idx++}`); values.push(clickLimit || null); }
-    if (oneTime    !== undefined) { fields.push(`one_time = $${idx++}`);    values.push(oneTime); }
+    if (oneTime !== undefined) { fields.push(`one_time = $${idx++}`); values.push(oneTime); }
 
     let finalShortId = shortId;
     if (newAlias && newAlias !== shortId) {
@@ -227,9 +242,9 @@ async function editUrl(req, res) {
     }
 
     res.json({
-      message:       'Link updated successfully',
-      shortId:       finalShortId,
-      shortUrl:      `http://localhost:3000/${finalShortId}`,
+      message: 'Link updated successfully',
+      shortId: finalShortId,
+      shortUrl: `http://localhost:3000/${finalShortId}`,
       updatedFields: fields.map(f => f.split(' ')[0])
     });
 
@@ -245,9 +260,17 @@ async function deleteUrl(req, res) {
   const { shortId } = req.params;
 
   try {
-    const result = await pool.query('SELECT short_id FROM urls WHERE short_id=$1', [shortId]);
+    // const result = await pool.query('SELECT short_id FROM urls WHERE short_id=$1', [shortId]);
+    // if (result.rows.length === 0)
+    //   return res.status(404).json({ error: 'Short URL not found' });
+
+    // TO THIS:
+    const result = await pool.query('SELECT * FROM urls WHERE short_id=$1', [shortId]);
     if (result.rows.length === 0)
       return res.status(404).json({ error: 'Short URL not found' });
+
+    if (result.rows[0].user_id !== req.user.id)
+      return res.status(403).json({ error: 'You do not have permission to delete this link' });
 
     await pool.query('DELETE FROM click_events WHERE short_id=$1', [shortId]);
     await pool.query('DELETE FROM urls WHERE short_id=$1', [shortId]);
@@ -278,10 +301,10 @@ async function bulkCreate(req, res) {
 
     if (!url) { errors.push({ index, error: 'URL is required' }); return; }
 
-    const shortId        = customAlias || nanoid(6);
-    const ttlSeconds     = parseTTL(expiryOpts);
-    const expiresAt      = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
-    const hashedPassword = password   ? await bcrypt.hash(password, 10)          : null;
+    const shortId = customAlias || nanoid(6);
+    const ttlSeconds = parseTTL(expiryOpts);
+    const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
     try {
       const existing = await pool.query('SELECT short_id FROM urls WHERE short_id=$1', [shortId]);
@@ -290,20 +313,28 @@ async function bulkCreate(req, res) {
         return;
       }
 
+      // await pool.query(
+      //   `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time)
+      //    VALUES ($1,$2,$3,$4,$5,$6)`,
+      //   [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false]
+      // );
+
       await pool.query(
-        `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false]
+        `INSERT INTO urls (short_id, original_url, expires_at, password, click_limit, one_time, user_id) 
+        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [shortId, url, expiresAt, hashedPassword, clickLimit || null, oneTime || false, req.user.id]
       );
 
       const shortUrl = `http://localhost:3000/${shortId}`;
-      const qrCode   = await QRCode.toDataURL(shortUrl);
+      const qrCode = await QRCode.toDataURL(shortUrl);
 
       if (!hashedPassword) await cacheUrl(shortId, url, ttlSeconds);
 
-      results.push({ index, shortId, shortUrl, qrCode, originalUrl: url,
-                     expiresAt, clickLimit: clickLimit || null,
-                     oneTime: oneTime || false, passwordProtected: !!password });
+      results.push({
+        index, shortId, shortUrl, qrCode, originalUrl: url,
+        expiresAt, clickLimit: clickLimit || null,
+        oneTime: oneTime || false, passwordProtected: !!password
+      });
 
     } catch (err) {
       console.error(`Bulk error at index ${index}:`, err.message);
