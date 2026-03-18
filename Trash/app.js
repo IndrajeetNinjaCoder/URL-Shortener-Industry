@@ -1,3 +1,4 @@
+const cors = require('cors');
 const express = require('express');
 const { nanoid } = require('nanoid');
 const { Pool } = require('pg');
@@ -12,7 +13,20 @@ const sharp = require('sharp');
 const axios = require('axios');
 
 const app = express();
+
+// Allow all origins (quick dev setup)
+// ✅ Handle preflight for ALL routes first
+app.options('*', cors());
+app.use(cors({
+  origin: 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
 app.use(express.json());
+
+
 
 /* Rate Limiting */
 const limiter = rateLimit({
