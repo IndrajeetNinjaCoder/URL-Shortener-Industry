@@ -347,4 +347,47 @@ async function bulkCreate(req, res) {
   });
 }
 
-module.exports = { createShortUrl, redirectUrl, previewUrl, editUrl, deleteUrl, bulkCreate };
+/* ── GET /user/links ─────────────────────────────────────────── */
+
+async function getUserLinks(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT short_id, original_url, created_at, expires_at, click_limit, one_time, password
+       FROM urls WHERE user_id=$1 ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+
+    const links = await Promise.all(
+      result.rows.map(async (row) => {
+        const { rows: clickRows } = await pool.query(
+          'SELECT COUNT(*) FROM click_events WHERE short_id=$1',
+          [row.short_id]
+        );
+        const totalClicks = parseInt(clickRows[0].count);
+
+        return {
+          shortId: row.short_id,
+          shortUrl: `http://localhost:3000/${row.short_id}`,
+          originalUrl: row.original_url,
+          createdAt: row.created_at,
+          expiresAt: row.expires_at,
+          clickLimit: row.click_limit,
+          oneTime: row.one_time,
+          passwordProtected: !!row.password,
+          totalClicks
+        };
+      })
+    );
+
+    res.json({
+      total: links.length,
+      links
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error' });
+  }
+}
+
+module.exports = { createShortUrl, redirectUrl, previewUrl, editUrl, deleteUrl, bulkCreate, getUserLinks };

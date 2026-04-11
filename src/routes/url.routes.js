@@ -4,15 +4,16 @@ const { authenticate } = require('../middleware/auth');   // ← add
 
 const {
   createShortUrl, redirectUrl, previewUrl,
-  editUrl, deleteUrl, bulkCreate
+  editUrl, deleteUrl, bulkCreate, getUserLinks
 } = require('../controllers/url.controller');
 
+router.get('/user/links',     authenticate, getUserLinks);     // protected
 router.post('/shorten',          authenticate, createShortUrl);   // protected
 router.post('/shorten/bulk',     authenticate, bulkCreate);       // protected
-router.get( '/preview/:shortId', authenticate, previewUrl);       // protected
-router.put( '/edit/:shortId',    authenticate, editUrl);          // protected
+router.get('/preview/:shortId', authenticate, previewUrl);       // protected
+router.put('/edit/:shortId',    authenticate, editUrl);          // protected
 router.delete('/delete/:shortId',authenticate, deleteUrl);        // protected
-router.get(  '/:shortId',        redirectUrl);   // public — anyone can visit short links
+router.get('/:shortId',        redirectUrl);   // public — anyone can visit short links
 
 module.exports = router;
 
